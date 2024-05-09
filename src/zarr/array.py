@@ -204,7 +204,7 @@ class AsyncArray:
         out = np.zeros(
             indexer.shape,
             dtype=self.metadata.dtype,
-            order=self.runtime_configuration.order,
+            order=config.get("runtime.order"),
         )
 
         # reading chunks and decoding them

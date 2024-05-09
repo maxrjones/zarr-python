@@ -21,7 +21,6 @@ from zarr.codecs import (
     TransposeCodec,
     ZstdCodec,
 )
-from zarr.metadata import runtime_configuration
 
 from zarr.abc.store import Store
 from zarr.store import MemoryStore, StorePath
@@ -255,27 +254,27 @@ async def test_order(
         else [TransposeCodec(order=order_from_dim(store_order, data.ndim)), BytesCodec()]
     )
 
-    a = await AsyncArray.create(
-        store / "order",
-        shape=data.shape,
-        chunk_shape=(32, 8),
-        dtype=data.dtype,
-        fill_value=0,
-        chunk_key_encoding=("v2", "."),
-        codecs=codecs_,
-        runtime_configuration=runtime_configuration(runtime_write_order),
-    )
+    with zarr.config.set({"runtime.order": runtime_write_order}):
+        a = await AsyncArray.create(
+            store / "order",
+            shape=data.shape,
+            chunk_shape=(32, 8),
+            dtype=data.dtype,
+            fill_value=0,
+            chunk_key_encoding=("v2", "."),
+            codecs=codecs_,
+        )
 
     await _AsyncArrayProxy(a)[:, :].set(data)
     read_data = await _AsyncArrayProxy(a)[:, :].get()
     assert np.array_equal(data, read_data)
 
-    a = await AsyncArray.open(
-        store / "order",
-        runtime_configuration=runtime_configuration(order=runtime_read_order),
-    )
-    read_data = await _AsyncArrayProxy(a)[:, :].get()
-    assert np.array_equal(data, read_data)
+    with zarr.config.set({"runtime.order": runtime_read_order}):
+        a = await AsyncArray.open(
+            store / "order",
+        )
+        read_data = await _AsyncArrayProxy(a)[:, :].get()
+        assert np.array_equal(data, read_data)
 
     if runtime_read_order == "F":
         assert read_data.flags["F_CONTIGUOUS"]
@@ -313,23 +312,22 @@ def test_order_implicit(
 
     codecs_: Optional[List[Codec]] = [ShardingCodec(chunk_shape=(8, 8))] if with_sharding else None
 
-    a = Array.create(
-        store / "order_implicit",
-        shape=data.shape,
-        chunk_shape=(16, 16),
-        dtype=data.dtype,
-        fill_value=0,
-        codecs=codecs_,
-        runtime_configuration=runtime_configuration(runtime_write_order),
-    )
+    with zarr.config.set({"runtime.order": runtime_write_order}):
+        a = Array.create(
+            store / "order_implicit",
+            shape=data.shape,
+            chunk_shape=(16, 16),
+            dtype=data.dtype,
+            fill_value=0,
+            codecs=codecs_,
+        )
 
     a[:, :] = data
-
-    a = Array.open(
-        store / "order_implicit",
-        runtime_configuration=runtime_configuration(order=runtime_read_order),
-    )
-    read_data = a[:, :]
+    with zarr.config.set({"runtime.order": runtime_read_order}):
+        a = Array.open(
+            store / "order_implicit",
+        )
+        read_data = a[:, :]
     assert np.array_equal(data, read_data)
 
     if runtime_read_order == "F":
@@ -365,27 +363,26 @@ async def test_transpose(
         else [TransposeCodec(order=(2, 1, 0)), BytesCodec()]
     )
 
-    a = await AsyncArray.create(
-        store / "transpose",
-        shape=data.shape,
-        chunk_shape=(1, 32, 8),
-        dtype=data.dtype,
-        fill_value=0,
-        chunk_key_encoding=("v2", "."),
-        codecs=codecs_,
-        runtime_configuration=runtime_configuration(runtime_write_order),
-    )
+    with zarr.config.set({"runtime.order": runtime_write_order}):
+        a = await AsyncArray.create(
+            store / "transpose",
+            shape=data.shape,
+            chunk_shape=(1, 32, 8),
+            dtype=data.dtype,
+            fill_value=0,
+            chunk_key_encoding=("v2", "."),
+            codecs=codecs_,
+        )
 
     await _AsyncArrayProxy(a)[:, :].set(data)
     read_data = await _AsyncArrayProxy(a)[:, :].get()
     assert np.array_equal(data, read_data)
-
-    a = await AsyncArray.open(
-        store / "transpose",
-        runtime_configuration=runtime_configuration(runtime_read_order),
-    )
-    read_data = await _AsyncArrayProxy(a)[:, :].get()
-    assert np.array_equal(data, read_data)
+    with zarr.config.set({"runtime.order": runtime_read_order}):
+        a = await AsyncArray.open(
+            store / "transpose",
+        )
+        read_data = await _AsyncArrayProxy(a)[:, :].get()
+        assert np.array_equal(data, read_data)
 
     if runtime_read_order == "F":
         assert read_data.flags["F_CONTIGUOUS"]

@@ -320,7 +320,7 @@ class ShardingCodec(
         out = np.zeros(
             shard_shape,
             dtype=shard_spec.dtype,
-            order=runtime_configuration.order,
+            order=config.get("runtime.order"),
         )
         shard_dict = await _ShardProxy.from_bytes(shard_bytes, self, chunks_per_shard)
 
@@ -369,7 +369,7 @@ class ShardingCodec(
         out = np.zeros(
             indexer.shape,
             dtype=shard_spec.dtype,
-            order=runtime_configuration.order,
+            order=config.get("runtime.order"),
         )
 
         indexed_chunks = list(indexer)
@@ -608,7 +608,7 @@ class ShardingCodec(
             await self.index_codecs.decode(
                 index_bytes,
                 self._get_index_chunk_spec(chunks_per_shard),
-                make_runtime_configuration("C"),
+                make_runtime_configuration(),
             )
         )
 
@@ -616,7 +616,7 @@ class ShardingCodec(
         index_bytes = await self.index_codecs.encode(
             index.offsets_and_lengths,
             self._get_index_chunk_spec(index.chunks_per_shard),
-            make_runtime_configuration("C"),
+            make_runtime_configuration(),
         )
         assert index_bytes is not None
         return index_bytes

@@ -8,7 +8,7 @@ from donfig import Config
 
 config = Config(
     "zarr",
-    defaults=[{"async": {"concurrency": None, "timeout": None}}],
+    defaults=[{"async": {"concurrency": None, "timeout": None}, "runtime": {"order": "C"}}],
 )
 
 
@@ -27,16 +27,12 @@ def parse_asyncio_loop(data: Any) -> AbstractEventLoop | None:
 
 @dataclass(frozen=True)
 class RuntimeConfiguration:
-    order: Literal["C", "F"] = "C"
     asyncio_loop: Optional[AbstractEventLoop] = None
 
     def __init__(
         self,
-        order: Literal["C", "F"] = "C",
         asyncio_loop: Optional[AbstractEventLoop] = None,
     ):
-        order_parsed = parse_indexing_order(order)
         asyncio_loop_parsed = parse_asyncio_loop(asyncio_loop)
 
-        object.__setattr__(self, "order", order_parsed)
         object.__setattr__(self, "asyncio_loop_parsed", asyncio_loop_parsed)
