@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import numpy.typing as npt
+from typing_extensions import deprecated
 
 from zarr.core.array import Array, AsyncArray, get_array_metadata
 from zarr.core.buffer import NDArrayLike
@@ -70,7 +71,7 @@ _CREATE_MODES: tuple[AccessModeLiteral, ...] = ("a", "w", "w-")
 _OVERWRITE_MODES: tuple[AccessModeLiteral, ...] = ("a", "r+", "w")
 
 
-def _infer_exists_ok(mode: AccessModeLiteral) -> bool:
+def _infer_overwrite(mode: AccessModeLiteral) -> bool:
     """
     Check that an ``AccessModeLiteral`` is compatible with overwriting an existing Zarr node.
     """
@@ -413,14 +414,14 @@ async def save_array(
         arr = np.array(arr)
     shape = arr.shape
     chunks = getattr(arr, "chunks", None)  # for array-likes with chunks attribute
-    exists_ok = kwargs.pop("exists_ok", None) or _infer_exists_ok(mode)
+    overwrite = kwargs.pop("overwrite", None) or _infer_overwrite(mode)
     new = await AsyncArray.create(
         store_path,
         zarr_format=zarr_format,
         shape=shape,
         dtype=arr.dtype,
         chunks=chunks,
-        exists_ok=exists_ok,
+        overwrite=overwrite,
         **kwargs,
     )
     await new.setitem(slice(None), arr)
@@ -493,8 +494,29 @@ async def save_group(
     await asyncio.gather(*aws)
 
 
-async def tree(*args: Any, **kwargs: Any) -> None:
-    raise NotImplementedError
+@deprecated("Use AsyncGroup.tree instead.")
+async def tree(grp: AsyncGroup, expand: bool | None = None, level: int | None = None) -> Any:
+    """Provide a rich display of the hierarchy.
+
+    Parameters
+    ----------
+    grp : Group
+        Zarr or h5py group.
+    expand : bool, optional
+        Only relevant for HTML representation. If True, tree will be fully expanded.
+    level : int, optional
+        Maximum depth to descend into hierarchy.
+
+    Returns
+    -------
+    TreeRepr
+        A pretty-printable object displaying the hierarchy.
+
+    .. deprecated:: 3.0.0
+        `zarr.tree()` is deprecated and will be removed in a future release.
+        Use `group.tree()` instead.
+    """
+    return await grp.tree(expand=expand, level=level)
 
 
 async def array(
@@ -625,7 +647,7 @@ async def group(
         return await AsyncGroup.from_store(
             store=store_path,
             zarr_format=_zarr_format,
-            exists_ok=overwrite,
+            overwrite=overwrite,
             attributes=attributes,
         )
 
@@ -653,12 +675,12 @@ async def open_group(
         Store or path to directory in file system or name of zip file.
 
         Strings are interpreted as paths on the local file system
-        and used as the ``root`` argument to :class:`zarr.store.LocalStore`.
+        and used as the ``root`` argument to :class:`zarr.storage.LocalStore`.
 
         Dictionaries are used as the ``store_dict`` argument in
-        :class:`zarr.store.MemoryStore``.
+        :class:`zarr.storage.MemoryStore``.
 
-        By default (``store=None``) a new :class:`zarr.store.MemoryStore`
+        By default (``store=None``) a new :class:`zarr.storage.MemoryStore`
         is created.
 
     mode : {'r', 'r+', 'a', 'w', 'w-'}, optional
@@ -731,12 +753,12 @@ async def open_group(
     except (KeyError, FileNotFoundError):
         pass
     if mode in _CREATE_MODES:
-        exists_ok = _infer_exists_ok(mode)
+        overwrite = _infer_overwrite(mode)
         _zarr_format = zarr_format or _default_zarr_version()
         return await AsyncGroup.from_store(
             store_path,
             zarr_format=_zarr_format,
-            exists_ok=exists_ok,
+            overwrite=overwrite,
             attributes=attributes,
         )
     raise FileNotFoundError(f"Unable to find group: {store_path}")
@@ -911,7 +933,7 @@ async def create(
         dtype=dtype,
         compressor=compressor,
         fill_value=fill_value,
-        exists_ok=overwrite,
+        overwrite=overwrite,
         filters=filters,
         dimension_separator=dimension_separator,
         zarr_format=zarr_format,
@@ -1098,12 +1120,12 @@ async def open_array(
         return await AsyncArray.open(store_path, zarr_format=zarr_format)
     except FileNotFoundError:
         if not store_path.read_only and mode in _CREATE_MODES:
-            exists_ok = _infer_exists_ok(mode)
+            overwrite = _infer_overwrite(mode)
             _zarr_format = zarr_format or _default_zarr_version()
             return await create(
                 store=store_path,
                 zarr_format=_zarr_format,
-                overwrite=exists_ok,
+                overwrite=overwrite,
                 **kwargs,
             )
         raise
