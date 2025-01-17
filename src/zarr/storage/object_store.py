@@ -63,6 +63,7 @@ class ObjectStore(Store):
                 obs.store.S3Store,
                 obs.store.LocalStore,
                 obs.store.MemoryStore,
+                obs.store.PrefixStore,
             ),
         ):
             raise TypeError(f"expected ObjectStore class, got {store!r}")
