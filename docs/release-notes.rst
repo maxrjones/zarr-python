@@ -1,20 +1,8 @@
 Release notes
 =============
 
-Unreleased
-----------
+.. towncrier release notes start
 
-Bug fixes
-~~~~~~~~~
-
-Features
-~~~~~~~~
-
-Documentation
-~~~~~~~~~~~~~
-
-Other
-~~~~~
 
 3.0.1 (Jan. 17, 2025)
 ---------------------
