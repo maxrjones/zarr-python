@@ -32,6 +32,14 @@ store_options = st.sampled_from(
         MemoryStore(),
         LocalStore(str(tmpdir.name + "/local.zarr")),
         # ZipStore(str(tmpdir.name + "/zarr.zip"), mode="w"), # This doesn't work yet
+        # FsspecStore.from_url(local_fs),
+        # FsspecStore.from_url(async_s3fs),
+        # FsspecStore.from_url(sync_s3fs),
+        # FsspecStore.from_mapper(...),
+        # FsspecStore(s3fs, ...)
+        # ObjectStore(MemoryStore, ...)
+        # ObjectStore(S3Store, ...)
+        # ObjectSTore(LocalStore, ...)
     ]
 )
 
