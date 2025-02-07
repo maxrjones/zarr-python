@@ -21,6 +21,19 @@ if TYPE_CHECKING:
     from _pytest.compat import LEGACY_PATH
 
     from zarr.core.common import ChunkCoords, MemoryOrder, ZarrFormat
+# store_options = st.just(MemoryStore())
+import tempfile
+
+import hypothesis.strategies as st
+
+tmpdir = tempfile.TemporaryDirectory()
+store_options = st.sampled_from(
+    [
+        MemoryStore(),
+        LocalStore(str(tmpdir.name + "/local.zarr")),
+        # ZipStore(str(tmpdir.name + "/zarr.zip"), mode="w"), # This doesn't work yet
+    ]
+)
 
 
 async def parse_store(
