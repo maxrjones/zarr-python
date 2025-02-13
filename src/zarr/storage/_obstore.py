@@ -146,6 +146,7 @@ class ObjectStore(Store):
 
     def __getstate__(self) -> dict[Any, Any]:
         state = self.__dict__.copy()
+        state.pop("obs")
         state["store"] = pickle.dumps(self.store)
         return state
 
@@ -157,24 +158,22 @@ class ObjectStore(Store):
         self, key: str, prototype: BufferPrototype, byte_range: ByteRequest | None = None
     ) -> Buffer | None:
         # docstring inherited
-        import obstore as obs
-
         try:
             if byte_range is None:
-                resp = await obs.get_async(self.store, key)
+                resp = await self.obs.get_async(self.store, key)
                 return prototype.buffer.from_bytes(await resp.bytes_async())  # type: ignore[arg-type]
             elif isinstance(byte_range, RangeByteRequest):
-                bytes = await obs.get_range_async(
+                bytes = await self.obs.get_range_async(
                     self.store, key, start=byte_range.start, end=byte_range.end
                 )
                 return prototype.buffer.from_bytes(bytes)  # type: ignore[arg-type]
             elif isinstance(byte_range, OffsetByteRequest):
-                resp = await obs.get_async(
+                resp = await self.obs.get_async(
                     self.store, key, options={"range": {"offset": byte_range.offset}}
                 )
                 return prototype.buffer.from_bytes(await resp.bytes_async())  # type: ignore[arg-type]
             elif isinstance(byte_range, SuffixByteRequest):
-                resp = await obs.get_async(
+                resp = await self.obs.get_async(
                     self.store, key, options={"range": {"suffix": byte_range.suffix}}
                 )
                 return prototype.buffer.from_bytes(await resp.bytes_async())  # type: ignore[arg-type]
@@ -193,10 +192,8 @@ class ObjectStore(Store):
 
     async def exists(self, key: str) -> bool:
         # docstring inherited
-        import obstore as obs
-
         try:
-            await obs.head_async(self.store, key)
+            await self.obs.head_async(self.store, key)
         except FileNotFoundError:
             return False
         else:
@@ -209,24 +206,20 @@ class ObjectStore(Store):
 
     async def set(self, key: str, value: Buffer) -> None:
         # docstring inherited
-        import obstore as obs
-
         self._check_writable()
         if not isinstance(value, Buffer):
             raise TypeError(
                 f"ObjectStore.set(): `value` must be a Buffer instance. Got an instance of {type(value)} instead."
             )
         buf = value.to_bytes()
-        await obs.put_async(self.store, key, buf)
+        await self.obs.put_async(self.store, key, buf)
 
     async def set_if_not_exists(self, key: str, value: Buffer) -> None:
         # docstring inherited
-        import obstore as obs
-
         self._check_writable()
         buf = value.to_bytes()
-        with contextlib.suppress(obs.exceptions.AlreadyExistsError):
-            await obs.put_async(self.store, key, buf, mode="create")
+        with contextlib.suppress(self.obs.exceptions.AlreadyExistsError):
+            await self.obs.put_async(self.store, key, buf, mode="create")
 
     @property
     def supports_deletes(self) -> bool:
@@ -235,10 +228,8 @@ class ObjectStore(Store):
 
     async def delete(self, key: str) -> None:
         # docstring inherited
-        import obstore as obs
-
         self._check_writable()
-        await obs.delete_async(self.store, key)
+        await self.obs.delete_async(self.store, key)
 
     @property
     def supports_partial_writes(self) -> bool:
@@ -258,23 +249,17 @@ class ObjectStore(Store):
 
     def list(self) -> AsyncGenerator[str, None]:
         # docstring inherited
-        import obstore as obs
-
-        objects: ListStream[list[ObjectMeta]] = obs.list(self.store)
+        objects: ListStream[list[ObjectMeta]] = self.obs.list(self.store)
         return _transform_list(objects)
 
     def list_prefix(self, prefix: str) -> AsyncGenerator[str, None]:
         # docstring inherited
-        import obstore as obs
-
-        objects: ListStream[list[ObjectMeta]] = obs.list(self.store, prefix=prefix)
+        objects: ListStream[list[ObjectMeta]] = self.obs.list(self.store, prefix=prefix)
         return _transform_list(objects)
 
     def list_dir(self, prefix: str) -> AsyncGenerator[str, None]:
         # docstring inherited
-        import obstore as obs
-
-        coroutine = obs.list_with_delimiter_async(self.store, prefix=prefix)
+        coroutine = self.obs.list_with_delimiter_async(self.store, prefix=prefix)
         return _transform_list_dir(coroutine, prefix)
 
 
