@@ -224,7 +224,7 @@ class ObjectStore(Store):
         self._check_writable()
         buf = value.to_bytes()
         with contextlib.suppress(obs.exceptions.AlreadyExistsError):
-            await obs.put_async(self.store, key, buf, mode="Create")
+            await obs.put_async(self.store, key, buf, mode="Create", conditional_put="etag")
 
     @property
     def supports_deletes(self) -> bool:
