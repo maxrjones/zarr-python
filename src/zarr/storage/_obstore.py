@@ -215,7 +215,7 @@ class ObjectStore(Store):
                 f"ObjectStore.set(): `value` must be a Buffer instance. Got an instance of {type(value)} instead."
             )
         buf = value.to_bytes()
-        await obs.put_async(self.store, key, buf)
+        await obs.put_async(self.store, key, buf, 
 
     async def set_if_not_exists(self, key: str, value: Buffer) -> None:
         # docstring inherited
@@ -224,7 +224,7 @@ class ObjectStore(Store):
         self._check_writable()
         buf = value.to_bytes()
         with contextlib.suppress(obs.exceptions.AlreadyExistsError):
-            await obs.put_async(self.store, key, buf)
+            await obs.put_async(self.store, key, buf, mode="Create")
 
     @property
     def supports_deletes(self) -> bool:
