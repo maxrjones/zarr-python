@@ -64,7 +64,7 @@ keywords = ["Python", "compressed", "ndimensional-arrays", "zarr"]
 # User extras
 remote = [
     "fsspec>=2023.10.0",
-    "obstore>=0.5.1",
+    'obstore @ git+https://github.com/developmentseed/obstore@e4680aaab3268433b605e742f580aee5010cfe41#subdirectory=obstore',
 ]
 gpu = [
     "cupy-cuda12x",
