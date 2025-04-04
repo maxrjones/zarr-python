@@ -220,7 +220,7 @@ dependencies = [
     'universal_pathlib @ git+https://github.com/fsspec/universal_pathlib',
     'typing_extensions @ git+https://github.com/python/typing_extensions',
     'donfig @ git+https://github.com/pytroll/donfig',
-    'obstore @ git+https://github.com/developmentseed/obstore@d2419573d2104e36a8812f273f26d2cf16df0184#subdirectory=obstore',
+    'obstore @ git+https://github.com/developmentseed/obstore@e4680aaab3268433b605e742f580aee5010cfe41#subdirectory=obstore',
     # test deps
     'zarr[test]',
 ]
