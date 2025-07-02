@@ -78,6 +78,7 @@ class MemoryStore(Store):
         byte_range: ByteRequest | None = None,
     ) -> Buffer | None:
         # docstring inherited
+        print(f"GET: {key}")
         if not self._is_open:
             await self._open()
         assert isinstance(key, str)
