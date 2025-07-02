@@ -78,7 +78,7 @@ class MemoryStore(Store):
         byte_range: ByteRequest | None = None,
     ) -> Buffer | None:
         # docstring inherited
-        print(f"GET: {key}")
+        print(f"get(key={key}, byte_range={byte_range})")
         if not self._is_open:
             await self._open()
         assert isinstance(key, str)
@@ -95,6 +95,7 @@ class MemoryStore(Store):
         key_ranges: Iterable[tuple[str, ByteRequest | None]],
     ) -> list[Buffer | None]:
         # docstring inherited
+        print(f"get_partial_values(key_ranges={key_ranges})")
 
         # All the key-ranges arguments goes with the same prototype
         async def _get(key: str, byte_range: ByteRequest | None) -> Buffer | None:
