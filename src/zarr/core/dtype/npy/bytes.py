@@ -1140,7 +1140,6 @@ class VariableLengthBytes(ZDType[np.dtypes.ObjectDType, bytes], HasObjectCodec):
         if zarr_format == 2:
             return {"name": "|O", "object_codec_id": self.object_codec_id}
         elif zarr_format == 3:
-            v3_unstable_dtype_warning(self)
             return self._zarr_v3_name
         raise ValueError(f"zarr_format must be 2 or 3, got {zarr_format}")  # pragma: no cover
 
