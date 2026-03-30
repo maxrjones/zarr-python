@@ -409,10 +409,11 @@ class ShardingCodec(
         elif isinstance(chunk_grid, RectilinearChunkGrid):
             # For rectilinear grids, every unique edge length per dimension
             # must be divisible by the corresponding inner chunk size.
-            for i, (edges, inner) in enumerate(
+            for i, (dim_spec, inner) in enumerate(
                 zip(chunk_grid.chunk_shapes, self.chunk_shape, strict=False)
             ):
-                for edge in set(edges):
+                unique_edges = {dim_spec} if isinstance(dim_spec, int) else set(dim_spec)
+                for edge in unique_edges:
                     if edge % inner != 0:
                         raise ValueError(
                             f"Chunk edge length {edge} in dimension {i} is not "
@@ -437,7 +438,7 @@ class ShardingCodec(
         indexer = BasicIndexer(
             tuple(slice(0, s) for s in shard_shape),
             shape=shard_shape,
-            chunk_grid=ChunkGrid.from_regular(shard_shape, chunk_shape),
+            chunk_grid=ChunkGrid.from_sizes(shard_shape, chunk_shape),
         )
 
         # setup output array
@@ -483,7 +484,7 @@ class ShardingCodec(
         indexer = get_indexer(
             selection,
             shape=shard_shape,
-            chunk_grid=ChunkGrid.from_regular(shard_shape, chunk_shape),
+            chunk_grid=ChunkGrid.from_sizes(shard_shape, chunk_shape),
         )
 
         # setup output array
@@ -558,7 +559,7 @@ class ShardingCodec(
             BasicIndexer(
                 tuple(slice(0, s) for s in shard_shape),
                 shape=shard_shape,
-                chunk_grid=ChunkGrid.from_regular(shard_shape, chunk_shape),
+                chunk_grid=ChunkGrid.from_sizes(shard_shape, chunk_shape),
             )
         )
 
@@ -600,7 +601,7 @@ class ShardingCodec(
             get_indexer(
                 selection,
                 shape=shard_shape,
-                chunk_grid=ChunkGrid.from_regular(shard_shape, chunk_shape),
+                chunk_grid=ChunkGrid.from_sizes(shard_shape, chunk_shape),
             )
         )
 
