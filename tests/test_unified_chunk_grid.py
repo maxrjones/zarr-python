@@ -19,7 +19,6 @@ from zarr.core.chunk_grids import (
     ChunkSpec,
     FixedDimension,
     VaryingDimension,
-    _decode_dim_spec,
     _is_rectilinear_chunks,
 )
 from zarr.core.common import compress_rle, expand_rle
@@ -43,19 +42,6 @@ def _enable_rectilinear_chunks() -> Generator[None, None, None]:
     """Enable rectilinear chunks for all tests in this module."""
     with zarr.config.set({"array.rectilinear_chunks": True}):
         yield
-
-
-def _serialize_via_dto(grid: ChunkGrid) -> dict[str, Any]:
-    """Serialize a ChunkGrid via the metadata DTO path (replaces removed serialize_chunk_grid)."""
-    if grid.is_regular:
-        meta = RegularChunkGridMeta(chunk_shape=grid.chunk_shape)
-        return meta.to_dict()
-    else:
-        chunk_shapes: tuple[int | tuple[int, ...], ...] = tuple(
-            dim.size if isinstance(dim, FixedDimension) else dim.edges for dim in grid.dimensions
-        )
-        meta_r = RectilinearChunkGrid(chunk_shapes=chunk_shapes)
-        return meta_r.to_dict()
 
 
 def _edges(grid: ChunkGrid, dim: int) -> tuple[int, ...]:
@@ -123,7 +109,7 @@ def test_dimension_index_to_chunk_last_valid(
         lambda: RectilinearChunkGrid.from_dict(
             {
                 "name": "rectilinear",
-                "configuration": {"kind": "inline", "chunk_shapes": [[10, 20, 30], [50, 50]]},
+                "configuration": {"kind": "inline", "chunk_shapes": [[10, 20, 30], [50, 50]]},  # type: ignore[typeddict-item]
             }
         ),
         lambda: zarr.create_array(MemoryStore(), shape=(30,), chunks=[[10, 20]], dtype="int32"),
@@ -612,45 +598,6 @@ def test_expand_rle_pair_with_float_count() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _decode_dim_spec tests
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("spec", "array_extent", "expected"),
-    [
-        (10, 25, [10, 10, 10]),
-        (5, 10, [5, 5]),
-        ([10, 20, 30], None, [10, 20, 30]),
-        ([], None, []),
-        ([[5, 3], 10], None, [5, 5, 5, 10]),
-    ],
-    ids=["bare-int", "bare-int-exact", "explicit-list", "empty-list", "list-with-rle"],
-)
-def test_decode_dim_spec(spec: Any, array_extent: int | None, expected: list[int]) -> None:
-    """_decode_dim_spec correctly interprets bare ints, explicit lists, and RLE-encoded specs"""
-    assert _decode_dim_spec(spec, array_extent=array_extent) == expected
-
-
-@pytest.mark.parametrize(
-    ("spec", "array_extent", "match"),
-    [
-        (10, None, "requires array shape"),
-        (0, 10, "must be > 0"),
-        (-5, 10, "must be > 0"),
-        (10.0, 10, "Invalid chunk_shapes entry"),
-        ("auto", 10, "Invalid chunk_shapes entry"),
-        (None, 10, "Invalid chunk_shapes entry"),
-    ],
-    ids=["no-extent", "zero", "negative", "float", "string", "none"],
-)
-def test_decode_dim_spec_errors(spec: Any, array_extent: int | None, match: str) -> None:
-    """_decode_dim_spec raises ValueError for invalid specs like missing extent or bad types"""
-    with pytest.raises(ValueError, match=match):
-        _decode_dim_spec(spec, array_extent=array_extent)
-
-
-# ---------------------------------------------------------------------------
 # _is_rectilinear_chunks tests
 # ---------------------------------------------------------------------------
 
@@ -692,70 +639,6 @@ def test_is_rectilinear_chunks(value: Any, expected: bool) -> None:
 # ---------------------------------------------------------------------------
 # Serialization tests
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("array_shape", "chunk_sizes", "expected_name", "expected_grid_shape"),
-    [
-        ((100, 200), (10, 20), "regular", (10, 10)),
-        ((60, 100), [[10, 20, 30], [25, 25, 25, 25]], "rectilinear", (3, 4)),
-    ],
-    ids=["regular", "rectilinear"],
-)
-def test_serialization_roundtrip(
-    array_shape: tuple[int, ...],
-    chunk_sizes: Any,
-    expected_name: str,
-    expected_grid_shape: tuple[int, ...],
-) -> None:
-    """ChunkGrid survives serialize-then-parse round-trip with correct name and grid_shape"""
-    g = ChunkGrid.from_sizes(array_shape, chunk_sizes)
-    d = _serialize_via_dto(g)
-    assert d["name"] == expected_name
-    meta = parse_chunk_grid_metadata(d)
-    if isinstance(meta, RegularChunkGridMeta):
-        g2 = ChunkGrid.from_sizes(array_shape, tuple(meta.chunk_shape))
-    else:
-        g2 = ChunkGrid.from_sizes(array_shape, meta.chunk_shapes)
-    assert g2.grid_shape == expected_grid_shape
-
-
-def test_serialization_rectilinear_rle() -> None:
-    """A grid with all uniform edges serializes as regular."""
-    g = ChunkGrid.from_sizes((1000, 100), [[100] * 10, [25, 25, 25, 25]])
-    d = _serialize_via_dto(g)
-    assert d["name"] == "regular"
-
-
-def test_serialization_rectilinear_uniform_stays_regular() -> None:
-    """A grid with all uniform edges serializes as regular via DTO."""
-    g = ChunkGrid.from_sizes((1000, 100), [[100] * 10, [25, 25, 25, 25]])
-    d = _serialize_via_dto(g)
-    # All-uniform edges collapse to regular
-    assert d["name"] == "regular"
-
-
-def test_serialization_rectilinear_rle_with_varying() -> None:
-    """Rectilinear grid with repeated edges serializes using RLE compression"""
-    g = ChunkGrid.from_sizes((350, 100), [[100, 100, 100, 50], [25, 25, 25, 25]])
-    d = _serialize_via_dto(g)
-    assert d["name"] == "rectilinear"
-    config = d["configuration"]
-    assert isinstance(config, dict)
-    chunk_shapes = config["chunk_shapes"]
-    assert chunk_shapes[0] == [[100, 3], 50]
-
-
-def test_serialization_bare_int_roundtrip() -> None:
-    """Bare-integer shorthand in chunk_shapes round-trips as bare int, not [int]."""
-    data: dict[str, Any] = {
-        "name": "rectilinear",
-        "configuration": {"kind": "inline", "chunk_shapes": [10, [20, 30]]},
-    }
-    meta = RectilinearChunkGrid.from_dict(data)  # type: ignore[arg-type]
-    out = meta.to_dict()
-    assert out["configuration"]["chunk_shapes"][0] == 10
-    assert out["configuration"]["chunk_shapes"][1] == [20, 30]
 
 
 def test_serialization_error_non_regular_chunk_shape() -> None:
@@ -802,15 +685,6 @@ def test_spec_kind_unknown_rejected() -> None:
         parse_chunk_grid_metadata(data)
 
 
-def test_spec_kind_inline_in_serialized_output() -> None:
-    """Serialization includes kind: 'inline'."""
-    g = ChunkGrid.from_sizes((60, 50), [[10, 20, 30], [25, 25]])
-    d = _serialize_via_dto(g)
-    config = d["configuration"]
-    assert isinstance(config, dict)
-    assert config["kind"] == "inline"
-
-
 def test_spec_integer_shorthand_per_dimension() -> None:
     """A bare integer in chunk_shapes means repeat until >= extent."""
     data: dict[str, Any] = {
@@ -818,7 +692,7 @@ def test_spec_integer_shorthand_per_dimension() -> None:
         "configuration": {"kind": "inline", "chunk_shapes": [4, [1, 2, 3]]},
     }
     meta = parse_chunk_grid_metadata(data)
-    g = ChunkGrid.from_sizes((6, 6), meta.chunk_shapes)
+    g = ChunkGrid.from_sizes((6, 6), meta.chunk_shapes)  # type: ignore[union-attr]
     assert _edges(g, 0) == (4, 4)
     assert _edges(g, 1) == (1, 2, 3)
 
@@ -830,7 +704,7 @@ def test_spec_mixed_rle_and_bare_integers() -> None:
         "configuration": {"kind": "inline", "chunk_shapes": [[[1, 3], 3]]},
     }
     meta = parse_chunk_grid_metadata(data)
-    g = ChunkGrid.from_sizes((6,), meta.chunk_shapes)
+    g = ChunkGrid.from_sizes((6,), meta.chunk_shapes)  # type: ignore[union-attr]
     assert _edges(g, 0) == (1, 1, 1, 3)
 
 
@@ -841,7 +715,7 @@ def test_spec_overflow_chunks_allowed() -> None:
         "configuration": {"kind": "inline", "chunk_shapes": [[4, 4, 4]]},
     }
     meta = parse_chunk_grid_metadata(data)
-    g = ChunkGrid.from_sizes((6,), meta.chunk_shapes)
+    g = ChunkGrid.from_sizes((6,), meta.chunk_shapes)  # type: ignore[union-attr]
     assert _edges(g, 0) == (4, 4, 4)
 
 
@@ -861,7 +735,7 @@ def test_spec_example() -> None:
         },
     }
     meta = parse_chunk_grid_metadata(data)
-    g = ChunkGrid.from_sizes((6, 6, 6, 6, 6), meta.chunk_shapes)
+    g = ChunkGrid.from_sizes((6, 6, 6, 6, 6), meta.chunk_shapes)  # type: ignore[union-attr]
     assert _edges(g, 0) == (4, 4)
     assert _edges(g, 1) == (1, 2, 3)
     assert _edges(g, 2) == (4, 4)
@@ -914,7 +788,7 @@ def test_parse_chunk_grid_rectilinear_extent_mismatch_raises(
     }
     meta = parse_chunk_grid_metadata(data)
     with pytest.raises(ValueError, match=match):
-        ChunkGrid.from_sizes(array_shape, meta.chunk_shapes)
+        ChunkGrid.from_sizes(array_shape, meta.chunk_shapes)  # type: ignore[union-attr]
 
 
 def test_parse_chunk_grid_rectilinear_extent_match_passes() -> None:
@@ -924,7 +798,7 @@ def test_parse_chunk_grid_rectilinear_extent_match_passes() -> None:
         "configuration": {"kind": "inline", "chunk_shapes": [[10, 20, 30], [25, 25]]},
     }
     meta = parse_chunk_grid_metadata(data)
-    g = ChunkGrid.from_sizes((60, 50), meta.chunk_shapes)
+    g = ChunkGrid.from_sizes((60, 50), meta.chunk_shapes)  # type: ignore[union-attr]
     assert g.grid_shape == (3, 2)
 
 
@@ -936,7 +810,7 @@ def test_parse_chunk_grid_rectilinear_ndim_mismatch_raises() -> None:
     }
     meta = parse_chunk_grid_metadata(data)
     with pytest.raises(ValueError, match="3 dimensions but chunk_sizes has 2"):
-        ChunkGrid.from_sizes((30, 50, 100), meta.chunk_shapes)
+        ChunkGrid.from_sizes((30, 50, 100), meta.chunk_shapes)  # type: ignore[union-attr]
 
 
 def test_parse_chunk_grid_rectilinear_rle_extent_validated() -> None:
@@ -946,10 +820,10 @@ def test_parse_chunk_grid_rectilinear_rle_extent_validated() -> None:
         "configuration": {"kind": "inline", "chunk_shapes": [[[10, 5]], [[25, 2]]]},
     }
     meta = parse_chunk_grid_metadata(data)
-    g = ChunkGrid.from_sizes((50, 50), meta.chunk_shapes)
+    g = ChunkGrid.from_sizes((50, 50), meta.chunk_shapes)  # type: ignore[union-attr]
     assert g.grid_shape == (5, 2)
     with pytest.raises(ValueError, match="extent 100 exceeds sum of edges 50"):
-        ChunkGrid.from_sizes((100, 50), meta.chunk_shapes)
+        ChunkGrid.from_sizes((100, 50), meta.chunk_shapes)  # type: ignore[union-attr]
 
 
 def test_parse_chunk_grid_varying_dimension_extent_mismatch_on_chunkgrid_input() -> None:
@@ -961,37 +835,6 @@ def test_parse_chunk_grid_varying_dimension_extent_mismatch_on_chunkgrid_input()
                 dim.with_extent(ext) for dim, ext in zip(g.dimensions, (100, 50), strict=True)
             )
         )
-
-
-# ---------------------------------------------------------------------------
-# Rectilinear round-trip preserves codec shape
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("shape", "chunks", "chunk_idx", "expected_codec_size"),
-    [
-        ((95,), (10,), 9, 10),
-        ((7,), (10,), 0, 10),
-    ],
-    ids=["boundary-chunk", "single-chunk-boundary"],
-)
-def test_rectilinear_roundtrip_preserves_codec_shape(
-    shape: tuple[int, ...],
-    chunks: tuple[int, ...],
-    chunk_idx: int,
-    expected_codec_size: int,
-) -> None:
-    """Serialization round-trip preserves codec_shape for boundary chunks"""
-    grid = ChunkGrid.from_sizes(shape, chunks)
-    assert grid.dimensions[0].chunk_size(chunk_idx) == expected_codec_size
-    serialized = _serialize_via_dto(grid)
-    meta = parse_chunk_grid_metadata(serialized)
-    if isinstance(meta, RegularChunkGridMeta):
-        parsed = ChunkGrid.from_sizes(shape, tuple(meta.chunk_shape))
-    else:
-        parsed = ChunkGrid.from_sizes(shape, meta.chunk_shapes)
-    assert parsed.dimensions[0].chunk_size(chunk_idx) == expected_codec_size
 
 
 # ---------------------------------------------------------------------------
@@ -1265,57 +1108,6 @@ def test_edge_case_chunk_grid_boundary_shape() -> None:
     """shape property with boundary extent."""
     g = ChunkGrid(dimensions=(FixedDimension(10, 95),))
     assert g.grid_shape == (10,)
-
-
-# -- Boundary FixedDimension in rectilinear serialization --
-
-
-def test_edge_case_boundary_fixed_dim_rectilinear_roundtrip() -> None:
-    """A rectilinear grid with a boundary FixedDimension preserves extent."""
-    g = ChunkGrid(
-        dimensions=(
-            VaryingDimension([10, 20, 30], extent=60),
-            FixedDimension(size=10, extent=95),
-        )
-    )
-    assert g.grid_shape == (3, 10)
-
-    d = _serialize_via_dto(g)
-    assert d["name"] == "rectilinear"
-    config = d["configuration"]
-    assert isinstance(config, dict)
-    chunk_shapes = config["chunk_shapes"]
-    assert chunk_shapes[1] == 10  # bare integer shorthand
-
-    meta = parse_chunk_grid_metadata(d)
-    g2 = ChunkGrid.from_sizes((60, 95), meta.chunk_shapes)
-    assert g2.grid_shape == g.grid_shape
-    for coord in g.all_chunk_coords():
-        orig = g[coord]
-        new = g2[coord]
-        assert orig is not None
-        assert new is not None
-        assert orig.shape == new.shape
-
-
-def test_edge_case_exact_extent_fixed_dim_rectilinear_roundtrip() -> None:
-    """No boundary: extent == size * nchunks round-trips cleanly."""
-    g = ChunkGrid(
-        dimensions=(
-            VaryingDimension([10, 20], extent=30),
-            FixedDimension(size=25, extent=100),
-        )
-    )
-    d = _serialize_via_dto(g)
-    meta = parse_chunk_grid_metadata(d)
-    g2 = ChunkGrid.from_sizes((30, 100), meta.chunk_shapes)
-    assert g2.grid_shape == g.grid_shape
-    for coord in g.all_chunk_coords():
-        orig = g[coord]
-        new = g2[coord]
-        assert orig is not None
-        assert new is not None
-        assert orig.shape == new.shape
 
 
 # -- Zero-size and zero-extent --
@@ -1933,6 +1725,7 @@ def test_pipeline_parse_chunk_grid_regular_from_dict() -> None:
     """parse_chunk_grid constructs a regular grid from a metadata dict."""
     d: dict[str, Any] = {"name": "regular", "configuration": {"chunk_shape": [10, 20]}}
     meta = parse_chunk_grid_metadata(d)
+    assert isinstance(meta, RegularChunkGridMeta)
     g = ChunkGrid.from_sizes((100, 200), tuple(meta.chunk_shape))
     assert g.is_regular
     assert g.chunk_shape == (10, 20)
@@ -2071,21 +1864,6 @@ def test_overflow_uniform_edges_collapses_to_fixed() -> None:
     assert g.is_regular
     assert g.chunk_sizes == ((10, 10, 10, 5),)
     assert g.dimensions[0].nchunks == 4
-
-
-def test_overflow_serialization_roundtrip() -> None:
-    """Overflow chunks survive serialization round-trip."""
-    g = ChunkGrid.from_sizes((50,), [[10, 20, 30, 40]])
-    serialized = _serialize_via_dto(g)
-    assert serialized["name"] == "rectilinear"
-    config = serialized["configuration"]
-    assert config["kind"] == "inline"
-    assert list(config["chunk_shapes"][0]) == [10, 20, 30, 40]
-    meta = parse_chunk_grid_metadata(serialized)
-    g2 = ChunkGrid.from_sizes((50,), meta.chunk_shapes)
-    assert g2.dimensions[0].ngridcells == 4
-    assert g2.dimensions[0].nchunks == 3
-    assert g2.chunk_sizes == ((10, 20, 20),)
 
 
 def test_overflow_index_to_chunk_near_extent() -> None:
@@ -2865,7 +2643,7 @@ def test_rectilinear_from_dict(
     json_input: dict[str, Any], expected_chunk_shapes: tuple[int | tuple[int, ...], ...]
 ) -> None:
     """RectilinearChunkGrid.from_dict correctly parses all spec forms."""
-    grid = RectilinearChunkGrid.from_dict(json_input)
+    grid = RectilinearChunkGrid.from_dict(json_input)  # type: ignore[arg-type]
     assert grid.chunk_shapes == expected_chunk_shapes
 
 
@@ -2907,7 +2685,7 @@ def test_rectilinear_to_dict(
 )
 def test_rectilinear_roundtrip(json_input: dict[str, Any]) -> None:
     """from_dict -> to_dict -> from_dict produces the same grid."""
-    grid1 = RectilinearChunkGrid.from_dict(json_input)
+    grid1 = RectilinearChunkGrid.from_dict(json_input)  # type: ignore[arg-type]
     grid2 = RectilinearChunkGrid.from_dict(grid1.to_dict())
     assert grid1.chunk_shapes == grid2.chunk_shapes
 

@@ -6,7 +6,6 @@ import math
 import numbers
 import operator
 import warnings
-from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from functools import reduce
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeGuard, cast, runtime_checkable
@@ -16,16 +15,14 @@ import numpy.typing as npt
 
 import zarr
 from zarr.core.common import (
-    JSON,
     ShapeLike,
     ceildiv,
-    expand_rle,
     parse_shapelike,
 )
 from zarr.errors import ZarrUserWarning
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator, Sequence
 
     from zarr.core.array import ShardsLike
     from zarr.core.metadata import ArrayMetadata
@@ -102,7 +99,7 @@ class FixedDimension:
         """Re-bind to *new_extent* without modifying edges.
 
         Used when constructing a grid from existing metadata where edges
-        are already correct (e.g. ``parse_chunk_grid``). Raises on
+        are already correct. Raises on
         ``VaryingDimension`` if edges don't cover the new extent.
         """
         return FixedDimension(size=self.size, extent=new_extent)
@@ -198,7 +195,7 @@ class VaryingDimension:
         """Re-bind to *new_extent* without modifying edges.
 
         Used when constructing a grid from existing metadata where edges
-        are already correct (e.g. ``parse_chunk_grid``). Raises if the
+        are already correct. Raises if the
         existing edges don't cover *new_extent*.
         """
         edge_sum = self.cumulative[-1]
@@ -272,37 +269,6 @@ class ChunkSpec:
 
 # A single dimension's rectilinear chunk spec: bare int (uniform shorthand),
 # list of ints (explicit edges), or mixed RLE (e.g. [[10, 3], 5]).
-
-
-def _decode_dim_spec(dim_spec: JSON, array_extent: int | None = None) -> list[int]:
-    """Decode a single dimension's chunk edge specification per the rectilinear spec.
-
-    Per the spec, each element of ``chunk_shapes`` can be:
-    - a bare integer ``m``: repeat ``m`` until the sum >= array extent
-    - an array of bare integers and/or ``[value, count]`` RLE pairs
-
-    Parameters
-    ----------
-    dim_spec
-        The raw JSON value for one dimension's chunk edges.
-    array_extent
-        Array length along this dimension. Required when *dim_spec* is a bare
-        integer (to know how many repetitions).
-    """
-    if isinstance(dim_spec, int):
-        if array_extent is None:
-            raise ValueError("Integer chunk_shapes shorthand requires array shape to expand.")
-        if dim_spec <= 0:
-            raise ValueError(f"Integer chunk edge length must be > 0, got {dim_spec}")
-        n = ceildiv(array_extent, dim_spec)
-        return [dim_spec] * n
-    if isinstance(dim_spec, list):
-        has_sublists = any(isinstance(e, list) for e in dim_spec)
-        if has_sublists:
-            return expand_rle(dim_spec)
-        else:
-            return [int(e) for e in dim_spec]
-    raise ValueError(f"Invalid chunk_shapes entry: {dim_spec}")
 
 
 def _is_rectilinear_chunks(chunks: Any) -> TypeGuard[Sequence[Sequence[int]]]:
