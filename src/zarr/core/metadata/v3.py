@@ -379,7 +379,7 @@ def resolve_chunks(
 
     See Also
     --------
-    parse_chunk_grid_metadata : Deserialize a chunk grid from stored JSON metadata.
+    parse_chunk_grid : Deserialize a chunk grid from stored JSON metadata.
     """
     from zarr.core.chunk_grids import _is_rectilinear_chunks, normalize_chunks
 
@@ -389,7 +389,7 @@ def resolve_chunks(
     return RegularChunkGrid(chunk_shape=normalize_chunks(chunks, shape, typesize))
 
 
-def parse_chunk_grid_metadata(
+def parse_chunk_grid(
     data: dict[str, JSON] | ChunkGridMetadata | NamedConfig[str, Any],
 ) -> ChunkGridMetadata:
     """Deserialize a chunk grid from stored JSON metadata or pass through an existing instance.
@@ -464,7 +464,7 @@ class ArrayV3Metadata(Metadata):
         """
 
         shape_parsed = parse_shapelike(shape)
-        chunk_grid_parsed = parse_chunk_grid_metadata(chunk_grid)
+        chunk_grid_parsed = parse_chunk_grid(chunk_grid)
         chunk_key_encoding_parsed = parse_chunk_key_encoding(chunk_key_encoding)
         dimension_names_parsed = parse_dimension_names(dimension_names)
         # Note: relying on a type method is numpy-specific

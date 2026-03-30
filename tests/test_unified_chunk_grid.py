@@ -24,7 +24,7 @@ from zarr.core.chunk_grids import (
 from zarr.core.common import compress_rle, expand_rle
 from zarr.core.metadata.v3 import (
     RectilinearChunkGrid,
-    parse_chunk_grid_metadata,
+    parse_chunk_grid,
 )
 from zarr.core.metadata.v3 import (
     RegularChunkGrid as RegularChunkGridMeta,
@@ -657,7 +657,7 @@ def test_serialization_error_zero_extent_rectilinear() -> None:
 def test_serialization_unknown_name_parse() -> None:
     """Parsing metadata with an unknown chunk grid name raises ValueError"""
     with pytest.raises(ValueError, match="Unknown chunk grid"):
-        parse_chunk_grid_metadata({"name": "hexagonal", "configuration": {}})
+        parse_chunk_grid({"name": "hexagonal", "configuration": {}})
 
 
 # ---------------------------------------------------------------------------
@@ -672,7 +672,7 @@ def test_spec_kind_inline_required_on_deserialize() -> None:
         "configuration": {"chunk_shapes": [[10, 20], [15, 15]]},
     }
     with pytest.raises(ValueError, match="requires a 'kind' field"):
-        parse_chunk_grid_metadata(data)
+        parse_chunk_grid(data)
 
 
 def test_spec_kind_unknown_rejected() -> None:
@@ -682,7 +682,7 @@ def test_spec_kind_unknown_rejected() -> None:
         "configuration": {"kind": "reference", "chunk_shapes": [[10, 20], [15, 15]]},
     }
     with pytest.raises(ValueError, match="Unsupported rectilinear chunk grid kind"):
-        parse_chunk_grid_metadata(data)
+        parse_chunk_grid(data)
 
 
 def test_spec_integer_shorthand_per_dimension() -> None:
@@ -691,7 +691,7 @@ def test_spec_integer_shorthand_per_dimension() -> None:
         "name": "rectilinear",
         "configuration": {"kind": "inline", "chunk_shapes": [4, [1, 2, 3]]},
     }
-    meta = parse_chunk_grid_metadata(data)
+    meta = parse_chunk_grid(data)
     g = ChunkGrid.from_sizes((6, 6), meta.chunk_shapes)  # type: ignore[union-attr]
     assert _edges(g, 0) == (4, 4)
     assert _edges(g, 1) == (1, 2, 3)
@@ -703,7 +703,7 @@ def test_spec_mixed_rle_and_bare_integers() -> None:
         "name": "rectilinear",
         "configuration": {"kind": "inline", "chunk_shapes": [[[1, 3], 3]]},
     }
-    meta = parse_chunk_grid_metadata(data)
+    meta = parse_chunk_grid(data)
     g = ChunkGrid.from_sizes((6,), meta.chunk_shapes)  # type: ignore[union-attr]
     assert _edges(g, 0) == (1, 1, 1, 3)
 
@@ -714,7 +714,7 @@ def test_spec_overflow_chunks_allowed() -> None:
         "name": "rectilinear",
         "configuration": {"kind": "inline", "chunk_shapes": [[4, 4, 4]]},
     }
-    meta = parse_chunk_grid_metadata(data)
+    meta = parse_chunk_grid(data)
     g = ChunkGrid.from_sizes((6,), meta.chunk_shapes)  # type: ignore[union-attr]
     assert _edges(g, 0) == (4, 4, 4)
 
@@ -734,7 +734,7 @@ def test_spec_example() -> None:
             ],
         },
     }
-    meta = parse_chunk_grid_metadata(data)
+    meta = parse_chunk_grid(data)
     g = ChunkGrid.from_sizes((6, 6, 6, 6, 6), meta.chunk_shapes)  # type: ignore[union-attr]
     assert _edges(g, 0) == (4, 4)
     assert _edges(g, 1) == (1, 2, 3)
@@ -786,7 +786,7 @@ def test_parse_chunk_grid_rectilinear_extent_mismatch_raises(
         "name": "rectilinear",
         "configuration": {"kind": "inline", "chunk_shapes": chunk_shapes},
     }
-    meta = parse_chunk_grid_metadata(data)
+    meta = parse_chunk_grid(data)
     with pytest.raises(ValueError, match=match):
         ChunkGrid.from_sizes(array_shape, meta.chunk_shapes)  # type: ignore[union-attr]
 
@@ -797,7 +797,7 @@ def test_parse_chunk_grid_rectilinear_extent_match_passes() -> None:
         "name": "rectilinear",
         "configuration": {"kind": "inline", "chunk_shapes": [[10, 20, 30], [25, 25]]},
     }
-    meta = parse_chunk_grid_metadata(data)
+    meta = parse_chunk_grid(data)
     g = ChunkGrid.from_sizes((60, 50), meta.chunk_shapes)  # type: ignore[union-attr]
     assert g.grid_shape == (3, 2)
 
@@ -808,7 +808,7 @@ def test_parse_chunk_grid_rectilinear_ndim_mismatch_raises() -> None:
         "name": "rectilinear",
         "configuration": {"kind": "inline", "chunk_shapes": [[10, 20], [25, 25]]},
     }
-    meta = parse_chunk_grid_metadata(data)
+    meta = parse_chunk_grid(data)
     with pytest.raises(ValueError, match="3 dimensions but chunk_sizes has 2"):
         ChunkGrid.from_sizes((30, 50, 100), meta.chunk_shapes)  # type: ignore[union-attr]
 
@@ -819,7 +819,7 @@ def test_parse_chunk_grid_rectilinear_rle_extent_validated() -> None:
         "name": "rectilinear",
         "configuration": {"kind": "inline", "chunk_shapes": [[[10, 5]], [[25, 2]]]},
     }
-    meta = parse_chunk_grid_metadata(data)
+    meta = parse_chunk_grid(data)
     g = ChunkGrid.from_sizes((50, 50), meta.chunk_shapes)  # type: ignore[union-attr]
     assert g.grid_shape == (5, 2)
     with pytest.raises(ValueError, match="extent 100 exceeds sum of edges 50"):
@@ -1724,7 +1724,7 @@ def test_pipeline_nchunks(tmp_path: Path) -> None:
 def test_pipeline_parse_chunk_grid_regular_from_dict() -> None:
     """parse_chunk_grid constructs a regular grid from a metadata dict."""
     d: dict[str, Any] = {"name": "regular", "configuration": {"chunk_shape": [10, 20]}}
-    meta = parse_chunk_grid_metadata(d)
+    meta = parse_chunk_grid(d)
     assert isinstance(meta, RegularChunkGridMeta)
     g = ChunkGrid.from_sizes((100, 200), tuple(meta.chunk_shape))
     assert g.is_regular
