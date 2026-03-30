@@ -488,7 +488,10 @@ def test_invalid_metadata(store: Store) -> None:
 def test_invalid_shard_shape() -> None:
     with pytest.raises(
         ValueError,
-        match="not divisible by the shard's inner chunk size",
+        match=(
+            f"Chunk edge length {16} in dimension {0} is not "
+            f"divisible by the shard's inner chunk size {9}\\."
+        ),
     ):
         zarr.create_array(
             {},
