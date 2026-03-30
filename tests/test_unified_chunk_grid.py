@@ -1097,8 +1097,8 @@ def test_e2e_create_array(
         chunks=chunks,
         dtype="float32",
     )
-    assert arr.chunk_grid.is_regular == expected_regular
-    assert arr.chunk_grid.ndim == len(shape)
+    assert ChunkGrid.from_metadata(arr.metadata).is_regular == expected_regular
+    assert ChunkGrid.from_metadata(arr.metadata).ndim == len(shape)
 
 
 @pytest.mark.parametrize(
@@ -1831,7 +1831,7 @@ def test_pipeline_persistence_roundtrip(tmp_path: Path) -> None:
     """Rectilinear array survives close and reopen with correct data"""
     _, a = _make_2d(tmp_path)
     z2 = zarr.open_array(store=tmp_path / "arr2d.zarr", mode="r")
-    assert not z2.chunk_grid.is_regular
+    assert not ChunkGrid.from_metadata(z2.metadata).is_regular
     np.testing.assert_array_equal(z2[:], a)
 
 
@@ -1926,7 +1926,7 @@ def test_pipeline_rectilinear_shards_validates_divisibility(tmp_path: Path) -> N
 def test_pipeline_nchunks(tmp_path: Path) -> None:
     """Rectilinear array reports the correct total number of chunks"""
     z, _ = _make_2d(tmp_path)
-    assert z.chunk_grid.get_nchunks() == 12
+    assert ChunkGrid.from_metadata(z.metadata).get_nchunks() == 12
 
 
 def test_pipeline_parse_chunk_grid_regular_from_dict() -> None:
@@ -2326,7 +2326,7 @@ def test_update_shape_regular_preserves_extents(tmp_path: Path) -> None:
     z[:] = np.arange(100, dtype="int32")
     z.resize(50)
     assert z.shape == (50,)
-    assert z.chunk_grid.dimensions[0].extent == 50
+    assert ChunkGrid.from_metadata(z.metadata).dimensions[0].extent == 50
 
 
 # ---------------------------------------------------------------------------
@@ -2402,8 +2402,8 @@ async def test_async_resize_grow() -> None:
 
     await arr.resize((50, 60))
     assert arr.shape == (50, 60)
-    assert _edges(arr.chunk_grid, 0) == (10, 20, 20)
-    assert _edges(arr.chunk_grid, 1) == (20, 20, 20)
+    assert _edges(ChunkGrid.from_metadata(arr.metadata), 0) == (10, 20, 20)
+    assert _edges(ChunkGrid.from_metadata(arr.metadata), 1) == (20, 20, 20)
     result = await arr.getitem((slice(0, 30), slice(0, 40)))
     np.testing.assert_array_equal(result, data)
 
@@ -2621,7 +2621,7 @@ def test_v2_chunk_grid_is_regular(tmp_path: Path) -> None:
         dtype="int32",
         zarr_format=2,
     )
-    grid = a.chunk_grid
+    grid = ChunkGrid.from_metadata(a.metadata)
     assert grid.is_regular
     assert grid.chunk_shape == (10, 15)
     assert grid.grid_shape == (2, 2)
@@ -2637,7 +2637,7 @@ def test_v2_boundary_chunks(tmp_path: Path) -> None:
         dtype="int32",
         zarr_format=2,
     )
-    grid = a.chunk_grid
+    grid = ChunkGrid.from_metadata(a.metadata)
     assert grid.dimensions[0].nchunks == 3
     assert grid.dimensions[0].chunk_size(2) == 10
     assert grid.dimensions[0].data_size(2) == 5
@@ -2674,7 +2674,7 @@ def test_v2_metadata_roundtrip(tmp_path: Path) -> None:
     b = zarr.open_array(store=store_path, mode="r")
     assert b.metadata.zarr_format == 2
     assert b.chunks == (2, 2)
-    assert b.chunk_grid.chunk_shape == (2, 2)
+    assert ChunkGrid.from_metadata(b.metadata).chunk_shape == (2, 2)
     np.testing.assert_array_equal(b[:], data)
 
 
@@ -2687,7 +2687,7 @@ def test_v2_chunk_spec_via_grid(tmp_path: Path) -> None:
         dtype="int32",
         zarr_format=2,
     )
-    grid = a.chunk_grid
+    grid = ChunkGrid.from_metadata(a.metadata)
     spec = grid[(0, 0)]
     assert spec is not None
     assert spec.shape == (10, 10)
@@ -2972,7 +2972,7 @@ def rectilinear_arrays_st(draw: st.DrawFn) -> tuple[zarr.Array[Any], np.ndarray[
 def test_property_block_indexing_rectilinear(data: st.DataObject) -> None:
     """Property test: block indexing on rectilinear arrays matches numpy."""
     z, a = data.draw(rectilinear_arrays_st())
-    grid = z.chunk_grid
+    grid = ChunkGrid.from_metadata(z.metadata)
 
     for dim in range(a.ndim):
         dim_grid = grid.dimensions[dim]

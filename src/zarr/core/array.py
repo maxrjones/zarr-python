@@ -122,6 +122,7 @@ from zarr.core.metadata.v3 import (
     RectilinearChunkGrid,
     RegularChunkGrid,
     parse_node_type_array,
+    resolve_chunks,
 )
 from zarr.core.sync import sync
 from zarr.errors import (
@@ -320,14 +321,12 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         The codec pipeline used for encoding and decoding chunks.
     config : ArrayConfig
         The runtime configuration of the array.
-    chunk_grid : ChunkGrid
-        The behavioral chunk grid bound to this array's shape.
     """
 
     metadata: T_ArrayMetadata
     store_path: StorePath
     codec_pipeline: CodecPipeline = field(init=False)
-    chunk_grid: ChunkGrid = field(init=False)
+    _chunk_grid: ChunkGrid = field(init=False)
     config: ArrayConfig
 
     @overload
@@ -358,7 +357,7 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         object.__setattr__(self, "metadata", metadata_parsed)
         object.__setattr__(self, "store_path", store_path)
         object.__setattr__(self, "config", config_parsed)
-        object.__setattr__(self, "chunk_grid", ChunkGrid.from_metadata(metadata_parsed))
+        object.__setattr__(self, "_chunk_grid", ChunkGrid.from_metadata(metadata_parsed))
         object.__setattr__(
             self,
             "codec_pipeline",
@@ -676,28 +675,9 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         if chunks is not None and chunk_shape is not None:
             raise ValueError("Only one of chunk_shape or chunks can be provided.")
 
-        # detect rectilinear (dask-style) chunks before normalize_chunks flattens them
         from zarr.core.chunk_grids import _is_rectilinear_chunks
 
         _raw_chunks = chunks if chunks is not None else chunk_shape
-        _rectilinear_chunk_grid: ChunkGridMetadata | None = None
-        _chunks: tuple[int, ...] | None = None
-        if _is_rectilinear_chunks(_raw_chunks):
-            from zarr.core.metadata.v3 import (
-                RectilinearChunkGrid as RectilinearChunkGridMeta,
-            )
-
-            _rectilinear_chunk_grid = RectilinearChunkGridMeta(
-                chunk_shapes=tuple(tuple(c) for c in _raw_chunks)
-            )
-        else:
-            item_size = 1
-            if isinstance(dtype_parsed, HasItemSize):
-                item_size = dtype_parsed.item_size
-            if chunks:
-                _chunks = normalize_chunks(chunks, shape, item_size)
-            else:
-                _chunks = normalize_chunks(chunk_shape, shape, item_size)
 
         config_parsed = parse_array_config(config)
 
@@ -719,11 +699,14 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
             if order is not None:
                 _warn_order_kwarg()
 
+            item_size = 1
+            if isinstance(dtype_parsed, HasItemSize):
+                item_size = dtype_parsed.item_size
+            chunk_grid = resolve_chunks(_raw_chunks, shape, item_size)
             result = await cls._create_v3(
                 store_path,
                 shape=shape,
                 dtype=dtype_parsed,
-                chunk_shape=_chunks,
                 fill_value=fill_value,
                 chunk_key_encoding=chunk_key_encoding,
                 codecs=codecs,
@@ -731,7 +714,7 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
                 attributes=attributes,
                 overwrite=overwrite,
                 config=config_parsed,
-                chunk_grid=_rectilinear_chunk_grid,
+                chunk_grid=chunk_grid,
             )
         elif zarr_format == 2:
             if codecs is not None:
@@ -744,9 +727,16 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
                 )
             if dimension_names is not None:
                 raise ValueError("dimension_names cannot be used for arrays with zarr_format 2.")
-            if _rectilinear_chunk_grid is not None:
+            if _is_rectilinear_chunks(_raw_chunks):
                 raise ValueError("Zarr format 2 does not support rectilinear chunk grids.")
-            assert _chunks is not None
+
+            item_size = 1
+            if isinstance(dtype_parsed, HasItemSize):
+                item_size = dtype_parsed.item_size
+            if chunks:
+                _chunks = normalize_chunks(chunks, shape, item_size)
+            else:
+                _chunks = normalize_chunks(chunk_shape, shape, item_size)
 
             if order is None:
                 order_parsed = config_parsed.order
@@ -781,23 +771,14 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
     def _create_metadata_v3(
         shape: ShapeLike,
         dtype: ZDType[TBaseDType, TBaseScalar],
-        chunk_shape: tuple[int, ...] | None = None,
+        chunk_grid: ChunkGridMetadata,
         fill_value: Any | None = DEFAULT_FILL_VALUE,
         chunk_key_encoding: ChunkKeyEncodingLike | None = None,
         codecs: Iterable[Codec | dict[str, JSON]] | None = None,
         dimension_names: DimensionNamesLike = None,
         attributes: dict[str, JSON] | None = None,
-        chunk_grid: ChunkGridMetadata | None = None,
     ) -> ArrayV3Metadata:
-        """
-        Create an instance of ArrayV3Metadata.
-
-        Exactly one of ``chunk_shape`` or ``chunk_grid`` must be provided.
-        """
-        if chunk_shape is not None and chunk_grid is not None:
-            raise ValueError("Only one of chunk_shape or chunk_grid can be provided.")
-        if chunk_shape is None and chunk_grid is None:
-            raise ValueError("One of chunk_shape or chunk_grid must be provided.")
+        """Create an instance of ArrayV3Metadata."""
         filters: tuple[ArrayArrayCodec, ...]
         compressors: tuple[BytesBytesCodec, ...]
 
@@ -824,16 +805,10 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         else:
             fill_value_parsed = fill_value
 
-        chunk_grid_meta: ChunkGridMetadata
-        if chunk_grid is not None:
-            chunk_grid_meta = chunk_grid
-        else:
-            assert chunk_shape is not None  # validated above
-            chunk_grid_meta = RegularChunkGrid(chunk_shape=parse_shapelike(chunk_shape))
         return ArrayV3Metadata(
             shape=shape,
             data_type=dtype,
-            chunk_grid=chunk_grid_meta,
+            chunk_grid=chunk_grid,
             chunk_key_encoding=chunk_key_encoding_parsed,
             fill_value=fill_value_parsed,
             codecs=codecs_parsed,  # type: ignore[arg-type]
@@ -848,7 +823,7 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         *,
         shape: ShapeLike,
         dtype: ZDType[TBaseDType, TBaseScalar],
-        chunk_shape: tuple[int, ...] | None = None,
+        chunk_grid: ChunkGridMetadata,
         config: ArrayConfig,
         fill_value: Any | None = DEFAULT_FILL_VALUE,
         chunk_key_encoding: (
@@ -861,12 +836,7 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         dimension_names: DimensionNamesLike = None,
         attributes: dict[str, JSON] | None = None,
         overwrite: bool = False,
-        chunk_grid: ChunkGridMetadata | None = None,
     ) -> AsyncArrayV3:
-        if chunk_shape is not None and chunk_grid is not None:
-            raise ValueError("Only one of chunk_shape or chunk_grid can be provided.")
-        if chunk_shape is None and chunk_grid is None:
-            raise ValueError("One of chunk_shape or chunk_grid must be provided.")
         if overwrite:
             if store_path.store.supports_deletes:
                 await store_path.delete_dir()
@@ -885,13 +855,12 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         metadata = cls._create_metadata_v3(
             shape=shape,
             dtype=dtype,
-            chunk_shape=chunk_shape,
+            chunk_grid=chunk_grid,
             fill_value=fill_value,
             chunk_key_encoding=chunk_key_encoding,
             codecs=codecs,
             dimension_names=dimension_names,
             attributes=attributes,
-            chunk_grid=chunk_grid,
         )
 
         array = cls(metadata=metadata, store_path=store_path, config=config)
@@ -1118,7 +1087,11 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
 
     @property
     def read_chunk_sizes(self) -> tuple[tuple[int, ...], ...]:
-        """Per-dimension sizes of chunks used for reading.
+        """Per-dimension data sizes of chunks used for reading, clipped to the array extent.
+
+        Boundary chunks that extend past the array shape are clipped, so
+        the last size along a dimension may be smaller than the declared
+        chunk size.  This matches the dask ``Array.chunks`` convention.
 
         When sharding is used, returns the inner chunk sizes.
         Otherwise, returns the outer chunk sizes (same as ``write_chunk_sizes``).
@@ -1126,7 +1099,8 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         Returns
         -------
         tuple[tuple[int, ...], ...]
-            One inner tuple per dimension containing chunk sizes.
+            One inner tuple per dimension containing the data size of each
+            chunk (not the encoded buffer size).
 
         Examples
         --------
@@ -1140,18 +1114,22 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         if len(codecs) == 1 and isinstance(codecs[0], ShardingCodec):
             inner_chunk_shape = codecs[0].chunk_shape
             return _chunk_sizes_from_shape(self.shape, inner_chunk_shape)
-        return self.chunk_grid.chunk_sizes
+        return self._chunk_grid.chunk_sizes
 
     @property
     def write_chunk_sizes(self) -> tuple[tuple[int, ...], ...]:
-        """Per-dimension sizes of chunks used for writing (storage chunks).
+        """Per-dimension data sizes of storage chunks, clipped to the array extent.
 
         Always returns the outer chunk sizes, regardless of sharding.
+        Boundary chunks that extend past the array shape are clipped, so
+        the last size along a dimension may be smaller than the declared
+        chunk size.  This matches the dask ``Array.chunks`` convention.
 
         Returns
         -------
         tuple[tuple[int, ...], ...]
-            One inner tuple per dimension containing chunk sizes.
+            One inner tuple per dimension containing the data size of each
+            chunk (not the encoded buffer size).
 
         Examples
         --------
@@ -1159,7 +1137,7 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         >>> arr.write_chunk_sizes
         ((30, 30, 30, 10), (40, 40))
         """
-        return self.chunk_grid.chunk_sizes
+        return self._chunk_grid.chunk_sizes
 
     @property
     def shards(self) -> tuple[int, ...] | None:
@@ -1374,7 +1352,7 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
             # When sharding, count inner chunks across the whole array
             chunk_shape = codecs[0].chunk_shape
             return tuple(starmap(ceildiv, zip(self.shape, chunk_shape, strict=True)))
-        return self.chunk_grid.grid_shape
+        return self._chunk_grid.grid_shape
 
     @property
     def _shard_grid_shape(self) -> tuple[int, ...]:
@@ -1702,7 +1680,7 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
             self.metadata,
             self.codec_pipeline,
             self.config,
-            self.chunk_grid,
+            self._chunk_grid,
             indexer,
             prototype=prototype,
             out=out,
@@ -1757,7 +1735,7 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
             self.metadata,
             self.codec_pipeline,
             self.config,
-            self.chunk_grid,
+            self._chunk_grid,
             selection,
             prototype=prototype,
         )
@@ -1775,7 +1753,7 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
             self.metadata,
             self.codec_pipeline,
             self.config,
-            self.chunk_grid,
+            self._chunk_grid,
             selection,
             out=out,
             fields=fields,
@@ -1795,7 +1773,7 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
             self.metadata,
             self.codec_pipeline,
             self.config,
-            self.chunk_grid,
+            self._chunk_grid,
             mask,
             out=out,
             fields=fields,
@@ -1815,7 +1793,7 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
             self.metadata,
             self.codec_pipeline,
             self.config,
-            self.chunk_grid,
+            self._chunk_grid,
             selection,
             out=out,
             fields=fields,
@@ -1841,7 +1819,7 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
             self.metadata,
             self.codec_pipeline,
             self.config,
-            self.chunk_grid,
+            self._chunk_grid,
             indexer,
             value,
             prototype=prototype,
@@ -1892,7 +1870,7 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
             self.metadata,
             self.codec_pipeline,
             self.config,
-            self.chunk_grid,
+            self._chunk_grid,
             selection,
             value,
             prototype=prototype,
@@ -2049,7 +2027,7 @@ class AsyncArray[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
     def _info(
         self, count_chunks_initialized: int | None = None, count_bytes_stored: int | None = None
     ) -> Any:
-        chunk_shape = self.chunks if self.chunk_grid.is_regular else None
+        chunk_shape = self.chunks if self._chunk_grid.is_regular else None
         return ArrayInfo(
             _zarr_format=self.metadata.zarr_format,
             _data_type=self._zdtype,
@@ -2102,9 +2080,9 @@ class Array[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         return self.async_array.config
 
     @property
-    def chunk_grid(self) -> ChunkGrid:
+    def _chunk_grid(self) -> ChunkGrid:
         """The behavioral chunk grid for this array, bound to the array's shape."""
-        return self.async_array.chunk_grid
+        return self.async_array._chunk_grid
 
     @classmethod
     @deprecated("Use zarr.create_array instead.", category=ZarrDeprecationWarning)
@@ -2409,7 +2387,11 @@ class Array[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
 
     @property
     def read_chunk_sizes(self) -> tuple[tuple[int, ...], ...]:
-        """Per-dimension sizes of chunks used for reading.
+        """Per-dimension data sizes of chunks used for reading, clipped to the array extent.
+
+        Boundary chunks that extend past the array shape are clipped, so
+        the last size along a dimension may be smaller than the declared
+        chunk size.  This matches the dask ``Array.chunks`` convention.
 
         When sharding is used, returns the inner chunk sizes.
         Otherwise, returns the outer chunk sizes (same as ``write_chunk_sizes``).
@@ -2417,7 +2399,8 @@ class Array[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         Returns
         -------
         tuple[tuple[int, ...], ...]
-            One inner tuple per dimension containing chunk sizes.
+            One inner tuple per dimension containing the data size of each
+            chunk (not the encoded buffer size).
 
         Examples
         --------
@@ -2429,14 +2412,18 @@ class Array[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
 
     @property
     def write_chunk_sizes(self) -> tuple[tuple[int, ...], ...]:
-        """Per-dimension sizes of chunks used for writing (storage chunks).
+        """Per-dimension data sizes of storage chunks, clipped to the array extent.
 
         Always returns the outer chunk sizes, regardless of sharding.
+        Boundary chunks that extend past the array shape are clipped, so
+        the last size along a dimension may be smaller than the declared
+        chunk size.  This matches the dask ``Array.chunks`` convention.
 
         Returns
         -------
         tuple[tuple[int, ...], ...]
-            One inner tuple per dimension containing chunk sizes.
+            One inner tuple per dimension containing the data size of each
+            chunk (not the encoded buffer size).
 
         Examples
         --------
@@ -3232,7 +3219,7 @@ class Array[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
             prototype = default_buffer_prototype()
         return sync(
             self.async_array._get_selection(
-                BasicIndexer(selection, self.shape, self.chunk_grid),
+                BasicIndexer(selection, self.shape, self._chunk_grid),
                 out=out,
                 fields=fields,
                 prototype=prototype,
@@ -3339,7 +3326,7 @@ class Array[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         """
         if prototype is None:
             prototype = default_buffer_prototype()
-        indexer = BasicIndexer(selection, self.shape, self.chunk_grid)
+        indexer = BasicIndexer(selection, self.shape, self._chunk_grid)
         sync(self.async_array._set_selection(indexer, value, fields=fields, prototype=prototype))
 
     def get_orthogonal_selection(
@@ -3467,7 +3454,7 @@ class Array[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         """
         if prototype is None:
             prototype = default_buffer_prototype()
-        indexer = OrthogonalIndexer(selection, self.shape, self.chunk_grid)
+        indexer = OrthogonalIndexer(selection, self.shape, self._chunk_grid)
         return sync(
             self.async_array._get_selection(
                 indexer=indexer, out=out, fields=fields, prototype=prototype
@@ -3586,7 +3573,7 @@ class Array[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         """
         if prototype is None:
             prototype = default_buffer_prototype()
-        indexer = OrthogonalIndexer(selection, self.shape, self.chunk_grid)
+        indexer = OrthogonalIndexer(selection, self.shape, self._chunk_grid)
         return sync(
             self.async_array._set_selection(indexer, value, fields=fields, prototype=prototype)
         )
@@ -3674,7 +3661,7 @@ class Array[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
 
         if prototype is None:
             prototype = default_buffer_prototype()
-        indexer = MaskIndexer(mask, self.shape, self.chunk_grid)
+        indexer = MaskIndexer(mask, self.shape, self._chunk_grid)
         return sync(
             self.async_array._get_selection(
                 indexer=indexer, out=out, fields=fields, prototype=prototype
@@ -3764,7 +3751,7 @@ class Array[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         """
         if prototype is None:
             prototype = default_buffer_prototype()
-        indexer = MaskIndexer(mask, self.shape, self.chunk_grid)
+        indexer = MaskIndexer(mask, self.shape, self._chunk_grid)
         sync(self.async_array._set_selection(indexer, value, fields=fields, prototype=prototype))
 
     def get_coordinate_selection(
@@ -3852,7 +3839,7 @@ class Array[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         """
         if prototype is None:
             prototype = default_buffer_prototype()
-        indexer = CoordinateIndexer(selection, self.shape, self.chunk_grid)
+        indexer = CoordinateIndexer(selection, self.shape, self._chunk_grid)
         out_array = sync(
             self.async_array._get_selection(
                 indexer=indexer, out=out, fields=fields, prototype=prototype
@@ -3945,7 +3932,7 @@ class Array[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         if prototype is None:
             prototype = default_buffer_prototype()
         # setup indexer
-        indexer = CoordinateIndexer(selection, self.shape, self.chunk_grid)
+        indexer = CoordinateIndexer(selection, self.shape, self._chunk_grid)
 
         # handle value - need ndarray-like flatten value
         if not is_scalar(value, self.dtype):
@@ -4067,7 +4054,7 @@ class Array[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         """
         if prototype is None:
             prototype = default_buffer_prototype()
-        indexer = BlockIndexer(selection, self.shape, self.chunk_grid)
+        indexer = BlockIndexer(selection, self.shape, self._chunk_grid)
         return sync(
             self.async_array._get_selection(
                 indexer=indexer, out=out, fields=fields, prototype=prototype
@@ -4168,7 +4155,7 @@ class Array[T_ArrayMetadata: (ArrayV2Metadata, ArrayV3Metadata)]:
         """
         if prototype is None:
             prototype = default_buffer_prototype()
-        indexer = BlockIndexer(selection, self.shape, self.chunk_grid)
+        indexer = BlockIndexer(selection, self.shape, self._chunk_grid)
         sync(self.async_array._set_selection(indexer, value, fields=fields, prototype=prototype))
 
     @property
@@ -4930,16 +4917,20 @@ async def init_array(
         if order is not None:
             _warn_order_kwarg()
 
+        grid: ChunkGridMetadata
+        if rectilinear_meta is not None:
+            grid = rectilinear_meta
+        else:
+            grid = RegularChunkGrid(chunk_shape=chunks_out)
         meta = AsyncArray._create_metadata_v3(
             shape=shape_parsed,
             dtype=zdtype,
             fill_value=fill_value,
-            chunk_shape=chunks_out if rectilinear_meta is None else None,
+            chunk_grid=grid,
             chunk_key_encoding=chunk_key_encoding_parsed,
             codecs=codecs_out,
             dimension_names=dimension_names,
             attributes=attributes,
-            chunk_grid=rectilinear_meta,
         )
 
     arr = AsyncArray(metadata=meta, store_path=store_path, config=config)
@@ -5167,12 +5158,12 @@ def _parse_keep_array_attr(
 ]:
     if isinstance(data, Array):
         if chunks == "keep":
-            if data.chunk_grid.is_regular:
+            if data._chunk_grid.is_regular:
                 chunks = data.chunks
             else:
                 chunks = data.write_chunk_sizes
         if shards == "keep":
-            shards = data.shards if data.chunk_grid.is_regular else None
+            shards = data.shards if data._chunk_grid.is_regular else None
         if zarr_format is None:
             zarr_format = data.metadata.zarr_format
         if filters == "keep":
@@ -5681,7 +5672,7 @@ def _iter_chunk_regions(
         A tuple of slice objects representing the region spanned by each shard in the selection.
     """
 
-    return array.chunk_grid.iter_chunk_regions(origin=origin, selection_shape=selection_shape)
+    return array._chunk_grid.iter_chunk_regions(origin=origin, selection_shape=selection_shape)
 
 
 async def _nchunks_initialized(
@@ -6277,7 +6268,7 @@ async def _resize(
 
     if delete_outside_chunks and not only_growing:
         # Remove all chunks outside of the new shape
-        old_chunk_coords = set(array.chunk_grid.all_chunk_coords())
+        old_chunk_coords = set(array._chunk_grid.all_chunk_coords())
         new_chunk_coords = set(new_chunk_grid.all_chunk_coords())
 
         async def _delete_key(key: str) -> None:
@@ -6297,7 +6288,7 @@ async def _resize(
 
     # Update metadata and chunk_grid (in place)
     object.__setattr__(array, "metadata", new_metadata)
-    object.__setattr__(array, "chunk_grid", new_chunk_grid)
+    object.__setattr__(array, "_chunk_grid", new_chunk_grid)
 
 
 async def _append(
@@ -6363,7 +6354,7 @@ async def _append(
         array.metadata,
         array.codec_pipeline,
         array.config,
-        array.chunk_grid,
+        array._chunk_grid,
         append_selection,
         data,
     )
