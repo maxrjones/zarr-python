@@ -5,18 +5,10 @@ Importing this module is cheap and has no side effects: third-party adapters
 (registered through the `zarr.url_adapters` entry-point group) are loaded
 only when a pipeline URL naming their scheme is actually resolved.
 
-The `|` character is reserved as the pipeline delimiter in every string
-store specification: a string containing `|` is always routed through the
-pipeline machinery, and no percent-escape is decoded. To address a local
-file whose *name* contains `|` (or `#`), pass a `pathlib.Path` instead of a
-string.
-
-As a zarr-python extension to the specification (which requires the root
-sub-URL of an absolute pipeline to carry a scheme), the root sub-URL may be
-a schemeless local filesystem path, e.g. `data/example.zip|zip:`. Schemeless
-roots are treated as opaque text — no query or fragment splitting is applied
-to them. Such pipelines are not portable to other URL pipeline
-implementations; portable pipelines should spell the root as a `file:` URL.
+A string store specification is a URL pipeline only if its root sub-URL
+has a URL scheme and every sub-URL after a `|` names a registered adapter
+(see `is_url_pipeline`). Every other string, including a local path that
+contains `|`, is handled exactly as before.
 """
 
 from __future__ import annotations
@@ -102,10 +94,10 @@ def parse_pipeline(url: str) -> tuple[PipelineSegment, ...]:
     `scheme:body` where the trailing colon is optional when the body is
     empty (`zip` is equivalent to `zip:`).
 
-    A schemeless root (a bare local path) is accepted as a zarr-python
-    extension to the specification and treated as opaque text: no query or
-    fragment splitting applies, since `?` and `#` are ordinary filename
-    characters there. See the module docstring.
+    A schemeless root (a bare local path) is parsed as opaque text, with no
+    query or fragment splitting, since `?` and `#` are ordinary filename
+    characters there. Such a string is not a URL pipeline:
+    `resolve_pipeline` rejects it and `is_url_pipeline` returns False.
 
     Segment text is preserved verbatim (no case or percent-encoding
     normalization) except that schemes are lowercased.
@@ -149,18 +141,32 @@ def _root_routes_to_adapter(scheme: str) -> bool:
     )
 
 
+def _adapter_scheme(sub_url: str) -> str:
+    """The lowercased scheme of an adapter sub-URL (`zip` and `zip:a?b` -> `zip`)."""
+    return sub_url.partition("?")[0].partition(":")[0].lower()
+
+
 def is_url_pipeline(url: str) -> bool:
     """
     Whether `url` should be routed through the URL pipeline machinery.
 
-    True when the URL contains a `|` separator, or when its scheme has a
-    registered URL pipeline adapter (a *root adapter* such as `gh:`).
+    True when the root sub-URL has a URL scheme and every sub-URL after a `|`
+    names a registered adapter (e.g. `s3://bucket/repo|icechunk:`), or when
+    there is no `|` and the scheme has a registered *root adapter* (such as
+    `gh:`). Anything else — a schemeless local path such as `data|x.zarr`, a
+    URL whose `|` is followed by an unregistered scheme — is not a pipeline.
     fsspec chained URLs (`zip::file://...`) and zarr's native `file:` /
-    `memory:` schemes are never routed to a root adapter.
+    `memory:` schemes are never routed to a root adapter. The registry check
+    inspects entry-point names only; no adapter code is imported.
     """
-    if "|" in url:
-        return True
-    return _root_routes_to_adapter(_root_scheme(url))
+    root, sep, rest = url.partition("|")
+    scheme = _root_scheme(root)
+    if not sep:
+        return _root_routes_to_adapter(scheme)
+    if not scheme:
+        return False
+    registered = list_url_adapter_schemes()
+    return all(_adapter_scheme(sub_url) in registered for sub_url in rest.split("|"))
 
 
 async def resolve_pipeline(
@@ -198,6 +204,11 @@ async def resolve_pipeline(
         in mode `"r"`) propagate unchanged, as for non-pipeline stores.
     """
     segments = parse_pipeline(url)
+    if not segments[0].scheme:
+        raise URLPipelineError(
+            f"{url!r} is not a URL pipeline: its root sub-URL has no scheme; "
+            "spell a local root as an absolute 'file:' URL"
+        )
     if len(segments) == 1 and not _root_routes_to_adapter(segments[0].scheme):
         raise URLPipelineError(
             f"{url!r} is not a URL pipeline: it has no '|' separator and no "
@@ -218,14 +229,7 @@ async def _resolve(
         )
 
     *preceding, last = segments
-    try:
-        adapter_cls = get_url_adapter(last.scheme)
-    except URLPipelineError as exc:
-        raise URLPipelineError(
-            f"{exc} Note: '|' is reserved as the URL pipeline delimiter; to "
-            "address a local file whose name contains '|', pass a "
-            "pathlib.Path instead of a string."
-        ) from None
+    adapter_cls = get_url_adapter(last.scheme)
 
     context = PipelineContext(
         preceding=tuple(preceding),
@@ -264,7 +268,7 @@ async def _resolve_root(
 
     `memory:` and `file:` roots are resolved here with the URL pipeline
     spec's semantics (spelling equivalences, mandatory absolute `file:`
-    paths); everything else — bare local paths, fsspec URLs — delegates to
+    paths); everything else (e.g. fsspec URLs) delegates to
     the existing `StoreLike` machinery unchanged.
     """
     if segment.scheme == "memory":

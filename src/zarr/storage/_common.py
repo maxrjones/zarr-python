@@ -53,56 +53,18 @@ class StorePath:
         The store to use.
     path : str
         The path within the store.
-
-    Attributes
-    ----------
-    zarr_format : ZarrFormat | None
-        Zarr format selected by a `zarr2:`/`zarr3:` URL pipeline segment,
-        or None. Not part of the StorePath's identity (ignored by `__eq__`).
     """
 
     store: Store
     path: str
-    zarr_format: ZarrFormat | None
 
     def __init__(self, store: Store, path: str = "") -> None:
         self.store = store
         self.path = normalize_path(path)
-        self.zarr_format = None
 
     @property
     def read_only(self) -> bool:
         return self.store.read_only
-
-    def resolve_zarr_format(self, zarr_format: ZarrFormat | None) -> ZarrFormat | None:
-        """
-        Combine the zarr format selected by a URL pipeline segment (`zarr2:` /
-        `zarr3:`) with a caller-supplied `zarr_format`.
-
-        Parameters
-        ----------
-        zarr_format : ZarrFormat | None
-            The format requested by the caller, or None when unspecified.
-
-        Returns
-        -------
-        ZarrFormat | None
-            The pipeline's format when the caller did not specify one, otherwise the
-            caller's format. None when neither is set.
-
-        Raises
-        ------
-        ValueError
-            If the caller's format differs from the one selected by the pipeline.
-        """
-        if self.zarr_format is None:
-            return zarr_format
-        if zarr_format is not None and zarr_format != self.zarr_format:
-            raise ValueError(
-                f"zarr_format={zarr_format} conflicts with the 'zarr{self.zarr_format}:' "
-                "segment of the URL pipeline; pass zarr_format=None to use the pipeline's format"
-            )
-        return self.zarr_format
 
     @classmethod
     async def _create_open_instance(cls, store: Store, path: str) -> Self:
@@ -116,10 +78,7 @@ class StorePath:
         Open StorePath based on the provided mode.
 
         * If the mode is None, return an opened version of the store with no changes.
-        * If the mode is 'r+', 'w-', or 'w' and the store is read-only, raise a ValueError.
-        * If the mode is 'a' (open-or-create) and the store is read-only, serve the
-          "open" half: the StorePath is opened read-only, and any subsequent write
-          fails at the store level.
+        * If the mode is 'r+', 'w-', 'w', or 'a' and the store is read-only, raise a ValueError.
         * If the mode is 'r' and the store is not read-only, return a copy of the store with read_only set to True.
         * If the mode is 'w-' and the store is not read-only and the StorePath contains keys, raise a FileExistsError.
 
@@ -145,8 +104,7 @@ class StorePath:
         FileExistsError
             If the mode is 'w-' and the store path already exists.
         ValueError
-            If the mode is "r+", "w-", or "w" and the store is read-only, or if the
-            mode is not a valid access mode.
+            If the mode is not "r" and the store is read-only, or
         """
 
         # fastpath if mode is None
@@ -157,9 +115,8 @@ class StorePath:
             raise ValueError(f"Invalid mode: {mode}, expected one of {ANY_ACCESS_MODE}")
 
         if store.read_only:
-            # mode "a" (open-or-create) on a read-only store means open-only;
-            # unambiguous write modes are rejected outright.
-            if mode not in ("r", "a"):
+            # Don't allow write operations on a read-only store
+            if mode != "r":
                 raise ValueError(
                     f"Store is read-only but mode is {mode!r}. Create a writable store or use 'r' mode."
                 )
@@ -320,9 +277,7 @@ class StorePath:
 
     def __truediv__(self, other: str) -> StorePath:
         """Combine this store path with another path"""
-        result = self.__class__(self.store, _join_paths([self.path, other]))
-        result.zarr_format = self.zarr_format
-        return result
+        return self.__class__(self.store, _join_paths([self.path, other]))
 
     def __str__(self) -> str:
         return _join_paths([str(self.store), self.path])
@@ -371,9 +326,10 @@ async def make_store(
     - `None` = `MemoryStore` object.
     - `FSMap` = `FsspecStore` object.
     - `UPath` = `FsspecStore` object, or `LocalStore` for a local `UPath`.
-    - `str` containing `|` (or whose scheme has a registered root adapter) = the store
-      resolved by the [URL pipeline][user-guide-url-pipelines]; the pipeline must address
-      the store root (use `make_store_path` for pipelines that address a path within a store).
+    - `str` that is a [URL pipeline][user-guide-url-pipelines] (a URL whose every `|`
+      is followed by a registered adapter, or whose scheme has a registered root adapter)
+      = the store the pipeline resolves to; the pipeline must address the store root (use
+      `make_store_path` for pipelines that address a path within a store).
 
     Parameters
     ----------
@@ -533,9 +489,11 @@ async def make_store_path(
     if isinstance(store_like, str) and is_url_pipeline(store_like):
         result = await resolve_pipeline(store_like, mode=mode, storage_options=storage_options)
         combined_path = _join_paths([normalize_path(result.path), path_normalized])
-        store_path = await StorePath.open(result.store, path=combined_path, mode=mode)
-        store_path.zarr_format = result.zarr_format
-        return store_path
+        if mode == "a" and result.store.read_only:
+            # "a" (open-or-create, the zarr.open default) on a read-only
+            # pipeline serves the "open" half
+            mode = "r"
+        return await StorePath.open(result.store, path=combined_path, mode=mode)
 
     if isinstance(store_like, StorePath):
         # Already a StorePath

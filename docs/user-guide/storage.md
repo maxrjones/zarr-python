@@ -100,7 +100,7 @@ print(group)
    group = zarr.open_group(UPath('s3://noaa-nwm-retro-v2-zarr-pds', anon=True), mode='r')
    ```
 
-- a [URL pipeline](#user-guide-url-pipelines) string containing `|`, such as
+- a [URL pipeline](#user-guide-url-pipelines) string, such as
   `s3://bucket/data.zip|zip:`, which is resolved through registered adapters.
 
 - a [`Store`][zarr.abc.store.Store] or [`StorePath`][zarr.storage.StorePath] -
@@ -116,19 +116,21 @@ sub-URL locates a resource with a conventional URL; each subsequent sub-URL name
 `zarr.url_adapters` entry-point group — see
 [`zarr.abc.url_pipeline`][zarr.abc.url_pipeline] for the adapter interface. Builtin
 adapters (`zip:`, `zarr2:`/`zarr3:`) are under development and will expand this
-section. URLs without a `|` (and without a registered root scheme) are handled
-exactly as before.
+section.
+
+A string is a URL pipeline only if its root sub-URL has a URL scheme and every
+sub-URL after a `|` names a registered adapter (or, without a `|`, if its scheme has a
+registered root adapter). Every other string is handled exactly as before, including
+a local path whose name contains `|`. Spell a local pipeline root as an absolute
+`file:` URL, e.g. `file:/data/example.zip|zip:`.
 
 `storage_options` passed to `zarr.open` apply to the *root* sub-URL (e.g. fsspec
 options for `s3://...`); adapters may consume adapter-specific, namespaced keys.
 Non-dict forms of `storage_options` are reserved for future per-segment
 configuration.
 
-The `|` character is reserved as the pipeline delimiter in every string store
-specification, and no percent-escape is decoded: to address a local file whose
-*name* contains `|` (or `#`), pass a `pathlib.Path` instead of a string.
-Registered adapters cannot intercept zarr's native `file:` and `memory:` root
-schemes, and fsspec's chained-URL syntax (`zip::s3://...`) keeps flowing to
+Within a pipeline no percent-escape is decoded. Registered adapters cannot
+intercept zarr's native `file:` and `memory:` root schemes, and fsspec's chained-URL syntax (`zip::s3://...`) keeps flowing to
 fsspec.
 
 Inside a pipeline, a `memory:` root is zarr's managed in-memory store (`memory:`,

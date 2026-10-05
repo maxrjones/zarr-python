@@ -25,7 +25,7 @@ from zarr.errors import URLPipelineError
 
 if TYPE_CHECKING:
     from zarr.abc.store import Store
-    from zarr.core.common import AccessModeLiteral, ZarrFormat
+    from zarr.core.common import AccessModeLiteral
 
 __all__ = [
     "AdapterResolution",
@@ -89,17 +89,14 @@ class AdapterResolution:
         Residual path *within* the store that the pipeline addresses
         (e.g. `"path/to/node"` for `...|icechunk://tag.v1/path/to/node`).
         Empty string when the pipeline addresses the store root.
-    zarr_format : ZarrFormat | None
-        Zarr format selected by a format segment (`zarr2:`/`zarr3:`),
-        or None if unspecified. A wrapper adapter that re-wraps a preceding
-        resolution must carry every field it does not change forward —
-        prefer `dataclasses.replace(preceding, store=..., path=...)` over
-        reconstructing, so fields added later are never silently dropped.
+
+    A wrapper adapter that re-wraps a preceding resolution should prefer
+    `dataclasses.replace(preceding, store=..., path=...)` over reconstructing,
+    so fields added later are never silently dropped.
     """
 
     store: Store
     path: str = ""
-    zarr_format: ZarrFormat | None = None
 
 
 @dataclass(frozen=True, eq=False)

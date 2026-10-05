@@ -112,7 +112,7 @@ class MyAdapter(URLPipelineAdapter):
     ) -> AdapterResolution:
         # A *wrapper* adapter opens the resource to its left and wraps it. Join the
         # preceding residual path with this segment's own path, and keep every other
-        # field (e.g. zarr_format) via dataclasses.replace.
+        # field via dataclasses.replace.
         preceding = await context.resolve_preceding()
         store = WrapperStore(preceding.store)
         path = "/".join(part.strip("/") for part in (preceding.path, segment.body) if part)

@@ -866,7 +866,7 @@ def create_array(
     serializer: SerializerLike = "auto",
     fill_value: Any | None = DEFAULT_FILL_VALUE,
     order: MemoryOrder | None = None,
-    zarr_format: ZarrFormat | None = None,
+    zarr_format: ZarrFormat | None = 3,
     attributes: dict[str, JSON] | None = None,
     chunk_key_encoding: ChunkKeyEncodingLike | None = None,
     dimension_names: DimensionNamesLike = None,
